@@ -1,0 +1,318 @@
+/*
+  Implementação de sistema de missões individuais para cada jogador.
+  - Usa malloc para armazenar missões por jogador.
+  - Funções modulares: atribuirMissao, verificarMissao, exibirMissao, atacar, exibirMapa, liberarMemoria.
+  - Simulação simples de turnos e verificação de missão ao final de cada turno.
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+typedef struct {
+    char nome[30];
+    char cor[10];
+    int tropas;
+} Territorio;
+
+/* --- Protótipos --- */
+void atribuirMissao(char **destino, char *missoes[], int totalMissoes);
+/* verificarMissao retorna 1 se cumprida, 0 caso contrário.
+   Recebe missao, mapa, tamanho do mapa e cor do jogador (para missões que dependem de cor). */
+int verificarMissao(char *missao, Territorio *mapa, int tamanho, const char *corJogador);
+void exibirMissao(const char *missao); /* passagem por valor para exibição */
+void atacar(Territorio *atacante, Territorio *defensor);
+void exibirMapa(Territorio *mapa, int tamanho);
+void liberarMemoria(Territorio *mapa, int tamanho, char **missoesJogadores, int numJogadores);
+
+/* --- Implementações --- */
+
+/* Sorteia uma missão e aloca/copia a string para *destino.
+   Passagem por referência: destino é char** para que possamos alocar e definir o ponteiro no chamador. */
+void atribuirMissao(char **destino, char *missoes[], int totalMissoes) {
+    int idx = rand() % totalMissoes;
+    size_t len = strlen(missoes[idx]) + 1;
+    *destino = (char *)malloc(len);
+    if (*destino == NULL) {
+        fprintf(stderr, "Erro: malloc falhou em atribuirMissao\n");
+        exit(EXIT_FAILURE);
+    }
+    strcpy(*destino, missoes[idx]); /* copia a descrição da missão */
+}
+
+/* Exibe a missão (passada por valor: const char*). */
+void exibirMissao(const char *missao) {
+    printf("Sua missão: %s\n", missao);
+}
+
+/* Simula um ataque entre territórios.
+   - Só faz sentido se atacantes e defensores tiverem cores diferentes (validação externa).
+   - Usa rand() para rolar dados 1..6 para cada lado.
+   - Se atacante vencer (soma do dado maior), transfere a cor do atacante e metade (inteira) das tropas para o defensor.
+   - Caso contrário, atacante perde 1 tropa. */
+void atacar(Territorio *atacante, Territorio *defensor) {
+    int dadoA = (rand() % 6) + 1;
+    int dadoD = (rand() % 6) + 1;
+    printf("Ataque: %s(%s, %d) -> %s(%s, %d). Rolos: A=%d D=%d\n",
+           atacante->nome, atacante->cor, atacante->tropas,
+           defensor->nome, defensor->cor, defensor->tropas,
+           dadoA, dadoD);
+
+    if (dadoA > dadoD) {
+        int transfer = atacante->tropas / 2;
+        if (transfer < 1) transfer = 1; /* garante pelo menos 1 */
+        defensor->tropas = transfer;
+        strcpy(defensor->cor, atacante->cor);
+        atacante->tropas -= transfer;
+        if (atacante->tropas < 0) atacante->tropas = 0;
+        printf("Atacante venceu! %d tropas transferidas. %s agora é %s com %d tropas.\n",
+               transfer, defensor->nome, defensor->cor, defensor->tropas);
+    } else {
+        atacante->tropas -= 1;
+        if (atacante->tropas < 0) atacante->tropas = 0;
+        printf("Defensor resistiu. Atacante perde 1 tropa. %s tem agora %d tropas.\n",
+               atacante->nome, atacante->tropas);
+    }
+}
+
+/* Exibe o mapa (lista de territórios). */
+void exibirMapa(Territorio *mapa, int tamanho) {
+    printf("Mapa atual:\n");
+    for (int i = 0; i < tamanho; ++i) {
+        printf(" %2d: %-15s | Cor: %-8s | Tropas: %2d\n",
+               i, mapa[i].nome, mapa[i].cor, mapa[i].tropas);
+    }
+}
+
+/* Verificação simples de missões:
+   Para este exemplo, vamos suportar (entre as missões definidas):
+   - "Conquistar 3 territorios seguidos" : verifica se o jogador possui 3 territórios *consecutivos* no vetor
+   - "Eliminar todas as tropas da cor X"  : verifica se nenhuma tropa da cor X permanece
+   - "Controlar 4 territorios"           : verifica se o jogador tem >= 4 territórios
+   - "Possuir o territorio Y"            : verifica se jogador possui um território específico
+   - "Ter 10 tropas no total"            : verifica se soma das tropas do jogador >= 10
+
+   A função procura palavras-chave na string da missão para decidir a checagem.
+*/
+int verificarMissao(char *missao, Territorio *mapa, int tamanho, const char *corJogador) {
+    if (missao == NULL || mapa == NULL || corJogador == NULL) return 0;
+
+    /* 1) Conquistar 3 territorios seguidos */
+    if (strstr(missao, "3") && strstr(missao, "seguidos")) {
+        int consec = 0;
+        for (int i = 0; i < tamanho; ++i) {
+            if (strcmp(mapa[i].cor, corJogador) == 0) {
+                consec++;
+                if (consec >= 3) return 1;
+            } else {
+                consec = 0;
+            }
+        }
+        return 0;
+    }
+
+    /* 2) Eliminar todas as tropas da cor vermelha (ou outra cor mencionada)
+       Aqui procuramos a palavra "Eliminar" e extraímos a cor ao final da string, se houver. */
+    if (strstr(missao, "Eliminar")) {
+        /* tentativa simples: procurar última palavra como cor */
+        char copia[200];
+        strncpy(copia, missao, sizeof(copia)-1);
+        copia[sizeof(copia)-1] = '\0';
+        char *token = NULL;
+        char *last = NULL;
+        token = strtok(copia, " ");
+        while (token != NULL) { last = token; token = strtok(NULL, " "); }
+        if (last != NULL) {
+            /* compara se ainda existe tropa dessa cor no mapa */
+            for (int i = 0; i < tamanho; ++i) {
+                if (strcasecmp(mapa[i].cor, last) == 0 && mapa[i].tropas > 0) return 0;
+            }
+            return 1;
+        }
+        return 0;
+    }
+
+    /* 3) Controlar X territorios (ex: "Controlar 4 territorios") */
+    if (strstr(missao, "Controlar")) {
+        /* procurar número na string */
+        int x = 0;
+        for (int i = 0; missao[i] != '\0'; ++i) {
+            if (missao[i] >= '0' && missao[i] <= '9') {
+                x = missao[i] - '0';
+                break;
+            }
+        }
+        if (x > 0) {
+            int cnt = 0;
+            for (int i = 0; i < tamanho; ++i)
+                if (strcmp(mapa[i].cor, corJogador) == 0) cnt++;
+            return (cnt >= x) ? 1 : 0;
+        }
+        return 0;
+    }
+
+    /* 4) Possuir o territorio Y (ex: "Possuir TerritorioA") */
+    if (strstr(missao, "Possuir")) {
+        /* pegar nome do território ao final */
+        char copia[200];
+        strncpy(copia, missao, sizeof(copia)-1);
+        copia[sizeof(copia)-1] = '\0';
+        char *token = strtok(copia, " ");
+        char *last = NULL;
+        while (token != NULL) { last = token; token = strtok(NULL, " "); }
+        if (last != NULL) {
+            for (int i = 0; i < tamanho; ++i) {
+                if (strcasecmp(mapa[i].nome, last) == 0 && strcmp(mapa[i].cor, corJogador) == 0) {
+                    return 1;
+                }
+            }
+        }
+        return 0;
+    }
+
+    /* 5) Ter X tropas no total (ex: "Ter 10 tropas no total") */
+    if (strstr(missao, "tropas")) {
+        int alvo = 0;
+        /* extrair número qualquer */
+        for (int i = 0; missao[i] != '\0'; ++i) {
+            if (missao[i] >= '0' && missao[i] <= '9') {
+                int j = i;
+                while (missao[j] >= '0' && missao[j] <= '9') {
+                    alvo = alvo * 10 + (missao[j] - '0');
+                    j++;
+                }
+                break;
+            }
+        }
+        if (alvo > 0) {
+            int soma = 0;
+            for (int i = 0; i < tamanho; ++i)
+                if (strcmp(mapa[i].cor, corJogador) == 0) soma += mapa[i].tropas;
+            return (soma >= alvo) ? 1 : 0;
+        }
+        return 0;
+    }
+
+    /* Se não reconheceu a missão, retorna 0 por padrão */
+    return 0;
+}
+
+/* Libera memória das missões e do mapa (mapa pode ser free'd pelo chamador se alocado dinamicamente) */
+void liberarMemoria(Territorio *mapa, int tamanho, char **missoesJogadores, int numJogadores) {
+    (void)mapa; (void)tamanho; /* mapa é liberado no main neste exemplo caso tenha sido alocado */
+    for (int i = 0; i < numJogadores; ++i) {
+        if (missoesJogadores[i] != NULL) {
+            free(missoesJogadores[i]);
+            missoesJogadores[i] = NULL;
+        }
+    }
+}
+
+/* --- Main: cria mapa, missões, atribui missões aos jogadores, e roda um loop simples de turnos --- */
+int main() {
+    srand((unsigned int)time(NULL));
+
+    /* Definindo missões possíveis */
+    char *missoesDisponiveis[] = {
+        "Conquistar 3 territorios seguidos",
+        "Eliminar todas as tropas vermelha",
+        "Controlar 4 territorios",
+        "Possuir Terr1",
+        "Ter 10 tropas no total"
+    };
+    int totalMissoes = sizeof(missoesDisponiveis) / sizeof(missoesDisponiveis[0]);
+
+    /* Simulação com 2 jogadores */
+    int numJogadores = 2;
+    char *missoesJogadores[2] = { NULL, NULL }; /* ponteiros que apontarão para strings alocadas */
+
+    /* Cores dos jogadores */
+    char *coresJogadores[2] = { "azul", "vermelha" };
+
+    /* Criando mapa exemplo (dinamicamente) */
+    int mapasize = 6;
+    Territorio *mapa = (Territorio *)calloc(mapasize, sizeof(Territorio));
+    if (!mapa) { fprintf(stderr, "Erro calloc mapa\n"); return 1; }
+
+    /* Inicialização simples de territórios */
+    strncpy(mapa[0].nome, "Terr0", sizeof(mapa[0].nome)-1); strcpy(mapa[0].cor, "azul"); mapa[0].tropas = 3;
+    strncpy(mapa[1].nome, "Terr1", sizeof(mapa[1].nome)-1); strcpy(mapa[1].cor, "vermelha"); mapa[1].tropas = 2;
+    strncpy(mapa[2].nome, "Terr2", sizeof(mapa[2].nome)-1); strcpy(mapa[2].cor, "neutra"); mapa[2].tropas = 1;
+    strncpy(mapa[3].nome, "Terr3", sizeof(mapa[3].nome)-1); strcpy(mapa[3].cor, "azul"); mapa[3].tropas = 4;
+    strncpy(mapa[4].nome, "Terr4", sizeof(mapa[4].nome)-1); strcpy(mapa[4].cor, "vermelha"); mapa[4].tropas = 3;
+    strncpy(mapa[5].nome, "Terr5", sizeof(mapa[5].nome)-1); strcpy(mapa[5].cor, "neutra"); mapa[5].tropas = 2;
+
+    /* Atribuir missões a cada jogador (mostra a missão apenas uma vez) */
+    for (int i = 0; i < numJogadores; ++i) {
+        atribuirMissao(&missoesJogadores[i], missoesDisponiveis, totalMissoes);
+        printf("Jogador %d (%s) - ", i+1, coresJogadores[i]);
+        exibirMissao(missoesJogadores[i]);
+        printf("\n");
+    }
+
+    /* Loop de turnos simples: cada iteração cada jogador tenta um ataque aleatório válido */
+    int vencedor = -1;
+    int turno = 0;
+    while (turno < 50 && vencedor == -1) { /* limite de turnos para evitar loop infinito em exemplo */
+        for (int jogador = 0; jogador < numJogadores && vencedor == -1; ++jogador) {
+            printf("=== Turno %d - Jogador %d (%s) ===\n", turno+1, jogador+1, coresJogadores[jogador]);
+            exibirMapa(mapa, mapasize);
+
+            /* Escolher um território atacante do jogador que tenha tropas > 0 */
+            int idxAt = -1;
+            for (int i = 0; i < mapasize; ++i) {
+                if (strcmp(mapa[i].cor, coresJogadores[jogador]) == 0 && mapa[i].tropas > 0) {
+                    idxAt = i;
+                    break;
+                }
+            }
+
+            /* Se não tiver território com tropas, passa a vez */
+            if (idxAt == -1) {
+                printf("Jogador %d não tem territórios com tropas para atacar.\n", jogador+1);
+            } else {
+                /* escolher defensor aleatório que não seja da mesma cor */
+                int idxDef = -1;
+                int tentativas = 0;
+                while (tentativas < 10) {
+                    int candidato = rand() % mapasize;
+                    if (strcmp(mapa[candidato].cor, mapa[idxAt].cor) != 0) { idxDef = candidato; break; }
+                    tentativas++;
+                }
+                if (idxDef == -1) {
+                    printf("Não há alvos inimigos disponíveis.\n");
+                } else {
+                    /* validar: só atacar se cores diferentes */
+                    if (strcmp(mapa[idxAt].cor, mapa[idxDef].cor) != 0) {
+                        atacar(&mapa[idxAt], &mapa[idxDef]);
+                    } else {
+                        printf("Validação falhou: alvo da mesma cor.\n");
+                    }
+                }
+            }
+
+            /* Ao final do turno do jogador, checar missão silenciosamente */
+            if (verificarMissao(missoesJogadores[jogador], mapa, mapasize, coresJogadores[jogador])) {
+                vencedor = jogador;
+                printf(">>> Jogador %d (%s) cumpriu sua missão: %s <<<\n", jogador+1, coresJogadores[jogador], missoesJogadores[jogador]);
+                break;
+            }
+
+            printf("\n");
+        }
+        turno++;
+    }
+
+    if (vencedor == -1) {
+        printf("Nenhum jogador cumpriu a missão no tempo limite do exemplo.\n");
+    } else {
+        printf("Jogador vencedor: %d (%s)\n", vencedor+1, coresJogadores[vencedor]);
+    }
+
+    /* Liberar memória alocada */
+    liberarMemoria(mapa, mapasize, missoesJogadores, numJogadores);
+    free(mapa);
+
+    return 0;
+}
